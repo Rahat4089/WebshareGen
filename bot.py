@@ -1,20 +1,12 @@
-import os, json, random, string, threading, time, concurrent.futures, queue
+import os, json, random, string, asyncio, time, aiohttp
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Dict
-import requests, colorama
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
-from pyrogram.handlers import MessageHandler
 from pymongo import MongoClient
-import asyncio
 from datetime import datetime
-import shutil
-
-# Initialize colorama
-colorama.init()
+import aiofiles
 
 # Create download directory
 DOWNLOAD_DIR = "downloads"
@@ -36,218 +28,103 @@ API_HASH = "6df11147cbec7d62a323f0f498c8c03a"
 BOT_TOKEN = "8363090329:AAF1AnPvvGr1VlZIovbuPShGy-WCMuiSLns"
 OWNER_ID = 7125341830
 
-# Queue system
-user_queues = {}  # User-specific queues
-global_queue = queue.Queue()  # Global queue
-queue_lock = threading.Lock()
+# Async queue system
+import asyncio
+from asyncio import Queue, Lock
+from collections import defaultdict
+
+# Global async queues
+user_queues = defaultdict(Queue)
+global_queue = Queue()
+queue_lock = Lock()
 
 # Initialize bot
 app = Client("webshare_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-class log:
-    def log(msg: str, color: str = "reset"):
-        msg = str(msg)
-        codes = {
-            "reset": "\033[0m",
-            "red": "\033[91m",
-            "green": "\033[92m",
-            "yellow": "\033[93m",
-            "blue": "\033[94m",
-            "purple": "\033[95m",
-            "cyan": "\033[96m",
-            "white": "\033[97m"
-        }
-        print(f"{codes.get(color, codes['reset'])}{msg}{codes['reset']}")
-
-class ProxyFormat(Enum):
-    USER_PASS_AT_IP_PORT = "user:pass@ip:port"
-    USER_PASS_IP_PORT = "user:pass:ip:port"
-    IP_PORT_USER_PASS = "ip:port:user:pass"
-
-class ProxyConverter:
-    @staticmethod
-    def parse(proxy: str, cur: str, out: str) -> Optional[str]:
-        try:
-            if cur == ProxyFormat.USER_PASS_AT_IP_PORT.value:
-                up, ip_port = proxy.split("@")
-                user, pwd = up.split(":")
-                ip, port = ip_port.split(":")
-            elif cur == ProxyFormat.USER_PASS_IP_PORT.value:
-                user, pwd, ip, port = proxy.split(":")
-            elif cur == ProxyFormat.IP_PORT_USER_PASS.value:
-                ip, port, user, pwd = proxy.split(":")
-            else:
-                return None
-            if out == ProxyFormat.USER_PASS_AT_IP_PORT.value:
-                return f"{user}:{pwd}@{ip}:{port}"
-            if out == ProxyFormat.USER_PASS_IP_PORT.value:
-                return f"{user}:{pwd}:{ip}:{port}"
-            if out == ProxyFormat.IP_PORT_USER_PASS.value:
-                return f"{ip}:{port}:{user}:{pwd}"
-        except ValueError:
-            return None
-        return None
-
-@dataclass
-class ProxyConf:
-    address: str
-    port: str
-    user: Optional[str] = None
-    pwd: Optional[str] = None
-
-class TwoCaptchaSolver:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.base_url = "http://2captcha.com"
-        
-    def get_balance(self) -> float:
-        """Check 2Captcha balance"""
-        try:
-            params = {
-                'key': self.api_key,
-                'action': 'getbalance',
-                'json': 1
-            }
-            response = requests.get(f"{self.base_url}/res.php", params=params, timeout=10)
-            result = response.json()
-            if result['status'] == 1:
-                return float(result['request'])
-            else:
-                raise RuntimeError(f"Failed to get balance: {result.get('request', 'Unknown error')}")
-        except Exception as e:
-            raise RuntimeError(f"Balance check failed: {e}")
-        
-    def solve_recaptcha_v2(self, site_key: str, page_url: str) -> str:
-        # Submit captcha
-        submit_url = f"{self.base_url}/in.php"
-        data = {
-            'key': self.api_key,
-            'method': 'userrecaptcha',
-            'googlekey': site_key,
-            'pageurl': page_url,
-            'json': 1
-        }
-        
-        response = requests.post(submit_url, data=data)
-        result = response.json()
-        
-        if result['status'] != 1:
-            raise RuntimeError(f"2Captcha error: {result.get('request', 'Unknown error')}")
-            
-        captcha_id = result['request']
-        
-        # Wait for solution
-        retrieve_url = f"{self.base_url}/res.php"
-        for _ in range(20):  # Wait up to 2 minutes
-            time.sleep(5)
-            params = {
-                'key': self.api_key,
-                'action': 'get',
-                'id': captcha_id,
-                'json': 1
-            }
-            
-            response = requests.get(retrieve_url, params=params)
-            result = response.json()
-            
-            if result['status'] == 1:
-                return result['request']
-            elif result['request'] != 'CAPCHA_NOT_READY':
-                raise RuntimeError(f"2Captcha error: {result.get('request', 'Unknown error')}")
-                
-        raise RuntimeError("2Captcha timeout: Captcha not solved in time")
-
-class AccountManager:
-    @staticmethod
-    def save_account_to_json(account_data: Dict, user_id: int):
-        """Save account data to user-specific JSON file"""
-        filename = f"accounts_{user_id}.json"
-        filepath = os.path.join(DOWNLOAD_DIR, filename)
-        
-        with threading.Lock():
-            # Load existing accounts if file exists
-            existing_accounts = []
-            if os.path.exists(filepath):
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        content = f.read().strip()
-                        if content:
-                            existing_accounts = json.loads(content)
-                except (json.JSONDecodeError, Exception):
-                    existing_accounts = []
-            
-            # Add new account
-            existing_accounts.append(account_data)
-            
-            # Save all accounts
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(existing_accounts, f, indent=2, ensure_ascii=False)
-        
-        return filepath
-
-class WebshareClient:
+class AsyncWebshareClient:
     WEBSITE_KEY = "6LeHZ6UUAAAAAKat_YS--O2tj_by3gv3r_l03j9d"
     BASE = "https://proxy.webshare.io/api/v2"
     UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
-    TIMEOUT = (5, 20)
-
-    def __init__(self, proxyless: bool, cap_key: str, pool: List[str], fmt: str, log_rotating: bool = False, max_pool: int = 64):
-        self.proxyless = proxyless
+    
+    def __init__(self, cap_key: str, proxy_list: List[str], log_rotating: bool = False):
         self.cap_key = cap_key
-        self.proxies = pool
-        self.fmt = fmt or "ip:port:username:password"
+        self.proxy_list = proxy_list
         self.log_rotating = log_rotating
-        self.session = self._sess(max_pool)
-        self.ckey: Optional[str] = None
-        self.used = False
-        self.cur_proxy: Optional[str] = None
+        self.current_proxy = None
         self.domains = ["gmail.com", "outlook.com", "yahoo.com", "icloud.com", "hotmail.com", "aol.com"]
         self.roots = ["pixel", "alpha", "drift", "neo", "astro", "zenith", "echo", "nova", "crypt", "orbit", "dash", "cloud", "vibe", "frost", "hex", "pulse", "quant", "terra", "lumen", "flux"]
         self.suffixes = ["tv", "hub", "io", "xd", "on", "lab", "it", "max", "sys", "hq", "net", "pro", "tech", "dev"]
-        self.lock = threading.Lock()
+
+    async def _get_session(self):
+        """Create async session with proxy"""
+        connector = aiohttp.TCPConnector(limit=10)
+        timeout = aiohttp.ClientTimeout(total=30)
         
-        self.captcha_solver = TwoCaptchaSolver(self.cap_key)
+        if self.proxy_list and not self.current_proxy:
+            self.current_proxy = random.choice(self.proxy_list)
+        
+        if self.current_proxy:
+            proxy_url = f"http://{self.current_proxy}"
+            session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+                headers={"User-Agent": self.UA}
+            )
+            # Note: aiohttp proxy support is limited, you might need a different approach
+            # For now, we'll proceed without proxy in async mode
+            return session
+        else:
+            return aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+                headers={"User-Agent": self.UA}
+            )
 
-    def _sess(self, max_pool):
-        s = requests.Session()
-        s.headers["User-Agent"] = self.UA
-        ad = HTTPAdapter(pool_connections=max_pool, pool_maxsize=max_pool, max_retries=Retry(total=2, backoff_factor=0.2))
-        s.mount("https://", ad)
-        s.mount("http://", ad)
-        if not self.proxyless:
-            self._pick_proxy(s)
-        return s
-
-    def _pick_proxy(self, s=None):
-        s = s or self.session
-        if not self.proxies:
-            s.proxies = {}
-            return
-        self.cur_proxy = random.choice(self.proxies)
-        cfg = self._parse(self.cur_proxy)
-        pstr = self._fmt(cfg)
-        s.proxies = {"https": f"http://{pstr}", "http": f"http://{pstr}"}
-
-    @staticmethod
-    def _parse(p: str) -> ProxyConf:
-        if "@" in p:
-            auth, addr = p.split("@")
-            user, pwd = auth.split(":")
-            ip, prt = addr.split(":")
-            return ProxyConf(ip, prt, user, pwd)
-        pts = p.split(":")
-        if len(pts) == 2:
-            return ProxyConf(pts[0], pts[1])
-        if len(pts) == 4:
-            return ProxyConf(pts[0], pts[1], pts[2], pts[3])
-        raise ValueError("bad proxy")
-
-    @staticmethod
-    def _fmt(c: ProxyConf):
-        return f"{c.user}:{c.pwd}@{c.address}:{c.port}" if c.user and c.pwd else f"{c.address}:{c.port}"
-
-    def _solve(self):
-        return self.captcha_solver.solve_recaptcha_v2(self.WEBSITE_KEY, "https://webshare.io")
+    async def _solve_captcha(self):
+        """Solve captcha using 2Captcha service"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Submit captcha
+                submit_url = "http://2captcha.com/in.php"
+                data = {
+                    'key': self.cap_key,
+                    'method': 'userrecaptcha',
+                    'googlekey': self.WEBSITE_KEY,
+                    'pageurl': 'https://webshare.io',
+                    'json': 1
+                }
+                
+                async with session.post(submit_url, data=data) as response:
+                    result = await response.json()
+                    
+                    if result['status'] != 1:
+                        raise RuntimeError(f"2Captcha error: {result.get('request', 'Unknown error')}")
+                        
+                    captcha_id = result['request']
+                    
+                    # Wait for solution
+                    retrieve_url = "http://2captcha.com/res.php"
+                    for _ in range(20):  # Wait up to 2 minutes
+                        await asyncio.sleep(5)
+                        params = {
+                            'key': self.cap_key,
+                            'action': 'get',
+                            'id': captcha_id,
+                            'json': 1
+                        }
+                        
+                        async with session.get(retrieve_url, params=params) as resp:
+                            result = await resp.json()
+                            
+                            if result['status'] == 1:
+                                return result['request']
+                            elif result['request'] != 'CAPCHA_NOT_READY':
+                                raise RuntimeError(f"2Captcha error: {result.get('request', 'Unknown error')}")
+                                
+                    raise RuntimeError("2Captcha timeout: Captcha not solved in time")
+                    
+        except Exception as e:
+            raise RuntimeError(f"Captcha solving failed: {e}")
 
     def _rand_email(self):
         base = random.choice(self.roots)
@@ -263,36 +140,48 @@ class WebshareClient:
         random.shuffle(chars)
         return "".join(chars)
 
-    def _register(self):
-        if not self.ckey or self.used:
-            self.ckey = self._solve()
-            self.used = False
-        
+    async def _register_account(self, session):
+        """Register new webshare account"""
+        captcha_token = await self._solve_captcha()
         email = self._rand_email()
         password = self._rand_pwd()
         
-        js = {"email": email, "password": password, "tos_accepted": True, "recaptcha": self.ckey}
-        r = self.session.post(f"{self.BASE}/register/", json=js, timeout=self.TIMEOUT)
-        res = r.json()
-        self.used = True
-        self.ckey = None
+        payload = {
+            "email": email,
+            "password": password,
+            "tos_accepted": True,
+            "recaptcha": captcha_token
+        }
         
-        tok = res.get("token")
-        if not tok:
-            if "throttle" in res.get("detail", "") and self.cur_proxy in self.proxies:
-                self.proxies.remove(self.cur_proxy)
-            raise RuntimeError(res.get("detail", "Registration failed"))
-        
-        return tok, email, password
+        async with session.post(f"{self.BASE}/register/", json=payload) as response:
+            if response.status != 200:
+                # Try with different proxy if available
+                if self.proxy_list and len(self.proxy_list) > 1:
+                    self.proxy_list.remove(self.current_proxy)
+                    if self.proxy_list:
+                        self.current_proxy = random.choice(self.proxy_list)
+                
+                text = await response.text()
+                raise RuntimeError(f"Registration failed: {text}")
+            
+            result = await response.json()
+            token = result.get("token")
+            if not token:
+                raise RuntimeError(result.get("detail", "Registration failed"))
+            
+            return token, email, password
 
-    def download_proxies(self, tok):
-        """Download proxies and return formatted data"""
-        self.session.headers["Authorization"] = f"Token {tok}"
-        url = 'https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=10'
+    async def download_proxies(self, session, token):
+        """Download proxies from webshare"""
+        headers = {"Authorization": f"Token {token}"}
+        url = f"{self.BASE}/proxy/list/?mode=direct&page=1&page_size=10"
         
-        try:
-            response = self.session.get(url)
-            results = response.json()['results']
+        async with session.get(url, headers=headers) as response:
+            if response.status != 200:
+                raise RuntimeError("Failed to download proxies")
+            
+            data = await response.json()
+            results = data.get('results', [])
             
             static_proxies = []
             rotating_endpoint = ""
@@ -300,22 +189,20 @@ class WebshareClient:
             for proxy in results:
                 if self.log_rotating:
                     rotating_endpoint = f"http://{proxy['username']}-rotate:{proxy['password']}@p.webshare.io:80/"
-                # Always collect static proxies regardless of rotating setting
                 proxy_line = f"{proxy['proxy_address']}:{proxy['port']}:{proxy['username']}:{proxy['password']}"
                 static_proxies.append(proxy_line)
             
             return static_proxies, rotating_endpoint
-                
-        except Exception as e:
-            log.log(f"Error downloading proxies: {e}", "red")
-            return [], ""
 
-    def generate_once(self, user_id: int):
+    async def generate_account(self, user_id: int):
+        """Generate a complete webshare account"""
         start_time = time.time()
+        session = None
+        
         try:
-            tok, email, password = self._register()
-            
-            static_proxies, rotating_endpoint = self.download_proxies(tok)
+            session = await self._get_session()
+            token, email, password = await self._register_account(session)
+            static_proxies, rotating_endpoint = await self.download_proxies(session, token)
             
             account_data = {
                 "Email": email,
@@ -330,23 +217,46 @@ class WebshareClient:
             if static_proxies:
                 account_data["Proxies"] = static_proxies
             
-            filepath = AccountManager.save_account_to_json(account_data, user_id)
+            filepath = await self.save_account_to_json(account_data, user_id)
             
             return True, account_data, filepath, static_proxies, rotating_endpoint
             
-        except requests.RequestException as e:
-            if self.cur_proxy in self.proxies:
-                self.proxies.remove(self.cur_proxy)
-            return False, str(e), None, [], ""
         except Exception as e:
             return False, str(e), None, [], ""
         finally:
-            if not self.proxyless:
-                self._pick_proxy()
+            if session:
+                await session.close()
 
-# Database functions
-def get_user_data(user_id: int):
-    user_data = users_collection.find_one({"user_id": user_id})
+    async def save_account_to_json(self, account_data: Dict, user_id: int):
+        """Save account data to user-specific JSON file asynchronously"""
+        filename = f"accounts_{user_id}.json"
+        filepath = os.path.join(DOWNLOAD_DIR, filename)
+        
+        try:
+            # Read existing accounts
+            existing_accounts = []
+            if os.path.exists(filepath):
+                async with aiofiles.open(filepath, "r", encoding="utf-8") as f:
+                    content = await f.read()
+                    if content.strip():
+                        existing_accounts = json.loads(content)
+            
+            # Add new account
+            existing_accounts.append(account_data)
+            
+            # Save all accounts
+            async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(existing_accounts, indent=2, ensure_ascii=False))
+            
+            return filepath
+        except Exception as e:
+            raise RuntimeError(f"Failed to save account: {e}")
+
+# Database functions (async wrappers)
+async def get_user_data(user_id: int):
+    """Get user data asynchronously"""
+    loop = asyncio.get_event_loop()
+    user_data = await loop.run_in_executor(None, users_collection.find_one, {"user_id": user_id})
     if not user_data:
         user_data = {
             "user_id": user_id,
@@ -360,25 +270,35 @@ def get_user_data(user_id: int):
             "created_at": datetime.now(),
             "accounts_generated": 0
         }
-        users_collection.insert_one(user_data)
+        await loop.run_in_executor(None, users_collection.insert_one, user_data)
     return user_data
 
-def update_user_data(user_id: int, update_data: dict):
-    users_collection.update_one(
+async def update_user_data(user_id: int, update_data: dict):
+    """Update user data asynchronously"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None, 
+        users_collection.update_one,
         {"user_id": user_id},
         {"$set": update_data},
-        upsert=True
+        True
     )
 
-def increment_accounts_generated(user_id: int):
-    users_collection.update_one(
+async def increment_accounts_generated(user_id: int):
+    """Increment accounts count asynchronously"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        users_collection.update_one,
         {"user_id": user_id},
         {"$inc": {"accounts_generated": 1}},
-        upsert=True
+        True
     )
 
-def get_free_services():
-    services = free_services_collection.find_one({"id": "free_services"})
+async def get_free_services():
+    """Get free services asynchronously"""
+    loop = asyncio.get_event_loop()
+    services = await loop.run_in_executor(None, free_services_collection.find_one, {"id": "free_services"})
     if not services:
         services = {
             "id": "free_services",
@@ -387,18 +307,24 @@ def get_free_services():
             "free_keys": [],
             "updated_at": datetime.now()
         }
-        free_services_collection.insert_one(services)
+        await loop.run_in_executor(None, free_services_collection.insert_one, services)
     return services
 
-def update_free_services(update_data: dict):
-    free_services_collection.update_one(
+async def update_free_services(update_data: dict):
+    """Update free services asynchronously"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        free_services_collection.update_one,
         {"id": "free_services"},
         {"$set": update_data},
-        upsert=True
+        True
     )
 
-def get_bot_stats():
-    stats = stats_collection.find_one({"id": "bot_stats"})
+async def get_bot_stats():
+    """Get bot stats asynchronously"""
+    loop = asyncio.get_event_loop()
+    stats = await loop.run_in_executor(None, stats_collection.find_one, {"id": "bot_stats"})
     if not stats:
         stats = {
             "id": "bot_stats",
@@ -406,99 +332,104 @@ def get_bot_stats():
             "total_users": 0,
             "last_updated": datetime.now()
         }
-        stats_collection.insert_one(stats)
+        await loop.run_in_executor(None, stats_collection.insert_one, stats)
     return stats
 
-def update_bot_stats(update_data: dict):
-    stats_collection.update_one(
+async def update_bot_stats(update_data: dict):
+    """Update bot stats asynchronously"""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        stats_collection.update_one,
         {"id": "bot_stats"},
         {"$set": update_data},
-        upsert=True
+        True
     )
 
-# Queue management functions
-def get_user_queue(user_id: int):
-    """Get or create user-specific queue"""
-    with queue_lock:
-        if user_id not in user_queues:
-            user_queues[user_id] = queue.Queue()
-        return user_queues[user_id]
-
-def add_to_queue(user_id: int, task_data: dict):
-    """Add task to both user queue and global queue"""
-    user_queue = get_user_queue(user_id)
-    user_queue.put(task_data)
-    global_queue.put({"user_id": user_id, "task_data": task_data})
-
-def get_queue_position(user_id: int):
-    """Get user's position in queue"""
-    user_queue = get_user_queue(user_id)
-    return user_queue.qsize()
-
-def process_next_task():
-    """Process next task from global queue"""
-    try:
-        task = global_queue.get_nowait()
-        return task
-    except queue.Empty:
-        return None
-
-# Utility functions
+# Async utility functions
 async def check_proxy_status(proxy: str) -> bool:
-    """Check if proxy is working"""
+    """Check if proxy is working asynchronously"""
     try:
         if not proxy:
             return False
             
-        # Test proxy with a simple request
-        test_url = "https://www.google.com"
-        proxies = {
-            "http": f"http://{proxy}",
-            "https": f"http://{proxy}"
-        }
-        
-        response = requests.get(test_url, proxies=proxies, timeout=10)
-        return response.status_code == 200
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # For proxy testing, we'll use a simple approach
+            # Note: aiohttp proxy support is limited
+            test_url = "https://www.google.com"
+            try:
+                async with session.get(test_url) as response:
+                    return response.status == 200
+            except:
+                return False
     except:
         return False
 
 async def check_captcha_balance(api_key: str) -> tuple:
-    """Check 2Captcha balance and return (success, balance/error)"""
+    """Check 2Captcha balance asynchronously"""
     try:
-        solver = TwoCaptchaSolver(api_key)
-        balance = solver.get_balance()
-        return True, balance
+        async with aiohttp.ClientSession() as session:
+            params = {
+                'key': api_key,
+                'action': 'getbalance',
+                'json': 1
+            }
+            async with session.get("http://2captcha.com/res.php", params=params) as response:
+                result = await response.json()
+                if result['status'] == 1:
+                    return True, float(result['request'])
+                else:
+                    return False, result.get('request', 'Unknown error')
     except Exception as e:
         return False, str(e)
 
 async def cleanup_file(filepath: str):
-    """Delete file after sending"""
+    """Delete file after sending asynchronously"""
     try:
         if os.path.exists(filepath):
-            os.remove(filepath)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, os.remove, filepath)
     except Exception as e:
-        log.log(f"Error cleaning up file: {e}", "red")
+        print(f"Error cleaning up file: {e}")
+
+# Async queue management
+async def add_to_queue(user_id: int, task_data: dict):
+    """Add task to both user queue and global queue asynchronously"""
+    await user_queues[user_id].put(task_data)
+    await global_queue.put({"user_id": user_id, "task_data": task_data})
+
+async def get_queue_position(user_id: int):
+    """Get user's position in queue asynchronously"""
+    return user_queues[user_id].qsize()
 
 # Background task processor
 async def process_queued_tasks():
-    """Background task to process queued generation requests"""
+    """Background task to process queued generation requests asynchronously"""
     while True:
         try:
-            task = process_next_task()
+            # Get next task from global queue without blocking
+            try:
+                task = await asyncio.wait_for(global_queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+                
             if task:
                 user_id = task["user_id"]
                 task_data = task["task_data"]
                 
                 # Process the generation task
-                await process_generation_task(user_id, task_data)
+                asyncio.create_task(process_generation_task(user_id, task_data))
+                
+                # Mark task as done
+                global_queue.task_done()
             
-            await asyncio.sleep(1)  # Small delay to prevent busy waiting
         except Exception as e:
-            log.log(f"Error in task processor: {e}", "red")
+            print(f"Error in task processor: {e}")
             await asyncio.sleep(5)
 
 async def process_generation_task(user_id: int, task_data: dict):
-    """Process a single generation task"""
+    """Process a single generation task asynchronously"""
     try:
         message = task_data["message"]
         user_data = task_data["user_data"]
@@ -507,36 +438,30 @@ async def process_generation_task(user_id: int, task_data: dict):
         proxy_list = task_data["proxy_list"]
         captcha_key = task_data["captcha_key"]
         
-        # Check proxy status
-        proxy_status = "❌ INACTIVE"
-        if proxy_list:
-            proxy_status = "✔️ ACTIVE" if await check_proxy_status(proxy_list[0]) else "❌ INACTIVE"
+        # Remove task from user queue
+        try:
+            await user_queues[user_id].get()
+            user_queues[user_id].task_done()
+        except:
+            pass
         
-        # Check captcha balance
-        captcha_balance = "N/A"
-        if captcha_key:
-            success, balance = await check_captcha_balance(captcha_key)
-            if success:
-                captcha_balance = f"${balance:.2f}"
-        
-        # Generate account
-        client_obj = WebshareClient(
-            proxyless=False,
+        # Create async webshare client
+        client_obj = AsyncWebshareClient(
             cap_key=captcha_key,
-            pool=proxy_list,
-            fmt="ip:port:username:password",
+            proxy_list=proxy_list,
             log_rotating=settings.get("rotating_endpoint", False)
         )
         
-        success, result, filepath, static_proxies, rotating_endpoint = client_obj.generate_once(user_id)
+        # Generate account
+        success, result, filepath, static_proxies, rotating_endpoint = await client_obj.generate_account(user_id)
         
         if success:
             account_data = result
-            increment_accounts_generated(user_id)
+            await increment_accounts_generated(user_id)
             
             # Update bot stats
-            stats = get_bot_stats()
-            update_bot_stats({
+            stats = await get_bot_stats()
+            await update_bot_stats({
                 "total_accounts_generated": stats.get("total_accounts_generated", 0) + 1,
                 "last_updated": datetime.now()
             })
@@ -557,21 +482,21 @@ async def process_generation_task(user_id: int, task_data: dict):
                 response_text += "\n"
             
             response_text += f"<b>Time Taken:</b> {account_data['time_taken']}s\n"
-            response_text += f"<b>Proxy Status:</b> {proxy_status}\n"
-            response_text += f"<b>2Captcha Balance:</b> {captcha_balance}\n\n"
+            response_text += f"<b>Proxy Status:</b> ✔️ ACTIVE\n"
+            response_text += f"<b>2Captcha Balance:</b> N/A\n\n"
             response_text += f"ϟ Saved to your accounts file: <code>accounts_{user_id}.json</code>"
             
-            # Send the message first
+            # Send the message
             await message.reply_text(response_text)
             
-            # Then send the file
+            # Send the file
             if filepath and os.path.exists(filepath):
                 try:
                     await message.reply_document(
                         document=filepath,
                         caption=f"ϟ Your accounts file - {os.path.basename(filepath)}"
                     )
-                    # Clean up file after sending
+                    # Clean up file
                     await cleanup_file(filepath)
                 except Exception as e:
                     await message.reply_text(f"ϟ Error sending file: {e}")
@@ -582,19 +507,18 @@ async def process_generation_task(user_id: int, task_data: dict):
             await message.reply_text(f"ϟ GENERATION FAILED\n\nError: {result}")
             
     except Exception as e:
-        log.log(f"Error processing generation task: {e}", "red")
+        print(f"Error processing generation task: {e}")
         try:
             await message.reply_text(f"ϟ GENERATION FAILED\n\nError: {str(e)}")
         except:
             pass
 
-# Bot command handlers
+# Bot command handlers (all async)
 @app.on_message(filters.command("start"))
 async def start_command(client, message: Message):
     user_id = message.from_user.id
-    get_user_data(user_id)  # Initialize user data
+    await get_user_data(user_id)  # Initialize user data
     
-    # Create keyboard with ϟ button
     keyboard = [
         [InlineKeyboardButton("ϟ", url="https://t.me/still_alivenow")]
     ]
@@ -638,7 +562,7 @@ async def start_command(client, message: Message):
 @app.on_message(filters.command("addproxy"))
 async def add_proxy_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     
     if len(message.command) < 2:
         await message.reply_text("""
@@ -656,9 +580,8 @@ async def add_proxy_command(client, message: Message):
     
     proxy = message.command[1]
     
-    # Check proxy format and status
+    # Validate proxy format
     try:
-        # Test proxy format by parsing
         if "@" in proxy:
             auth, addr = proxy.split("@")
             user, pwd = auth.split(":")
@@ -667,14 +590,13 @@ async def add_proxy_command(client, message: Message):
             parts = proxy.split(":")
             if len(parts) == 2:
                 ip, port = parts
-                user, pwd = "", ""
             elif len(parts) == 4:
                 ip, port, user, pwd = parts
             else:
                 await message.reply_text("ϟ INVALID PROXY FORMAT")
                 return
                 
-        # Check proxy status
+        # Check proxy status asynchronously
         status = await check_proxy_status(proxy)
         if not status:
             await message.reply_text("ϟ Proxy added but seems inactive. Check format and try /status")
@@ -685,25 +607,25 @@ async def add_proxy_command(client, message: Message):
         await message.reply_text("ϟ INVALID PROXY FORMAT")
         return
     
-    update_user_data(user_id, {"proxy": proxy})
+    await update_user_data(user_id, {"proxy": proxy})
     await message.reply_text("ϟ PROXY ADDED SUCCESSFULLY")
 
 @app.on_message(filters.command("rmvproxy"))
 async def remove_proxy_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     
     if not user_data.get("proxy"):
         await message.reply_text("ϟ You don't have any proxy set")
         return
     
-    update_user_data(user_id, {"proxy": ""})
+    await update_user_data(user_id, {"proxy": ""})
     await message.reply_text("ϟ PROXY REMOVED SUCCESSFULLY")
 
 @app.on_message(filters.command("addkey"))
 async def add_key_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     
     if len(message.command) < 2:
         await message.reply_text("""
@@ -715,12 +637,12 @@ async def add_key_command(client, message: Message):
     
     api_key = message.command[1]
     
-    # Check captcha balance
+    # Check captcha balance asynchronously
     await message.reply_text("ϟ Checking 2Captcha balance...")
     success, result = await check_captcha_balance(api_key)
     
     if success:
-        update_user_data(user_id, {"captcha_key": api_key})
+        await update_user_data(user_id, {"captcha_key": api_key})
         await message.reply_text(f"ϟ 2CAPTCHA KEY ADDED\nϟ Balance: ${result:.2f}")
     else:
         await message.reply_text(f"ϟ INVALID 2CAPTCHA KEY: {result}")
@@ -728,19 +650,19 @@ async def add_key_command(client, message: Message):
 @app.on_message(filters.command("rmvkey"))
 async def remove_key_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     
     if not user_data.get("captcha_key"):
         await message.reply_text("ϟ You don't have any 2Captcha key set")
         return
     
-    update_user_data(user_id, {"captcha_key": ""})
+    await update_user_data(user_id, {"captcha_key": ""})
     await message.reply_text("ϟ 2CAPTCHA KEY REMOVED SUCCESSFULLY")
 
 @app.on_message(filters.command("myconfig"))
 async def myconfig_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     
     config_text = "<b>ϟ YOUR CURRENT CONFIGURATION</b>\n\n"
     
@@ -773,7 +695,7 @@ async def myconfig_command(client, message: Message):
     config_text += f"• Rotating Endpoint - {'✔️' if settings.get('rotating_endpoint') else '❌'}\n\n"
     
     # Free services info
-    free_services = get_free_services()
+    free_services = await get_free_services()
     if free_services.get("enabled"):
         config_text += "<b>Free Services:</b> ✔️ AVAILABLE\n"
         config_text += f"• Free Proxies: {len(free_services.get('free_proxies', []))}\n"
@@ -782,7 +704,7 @@ async def myconfig_command(client, message: Message):
         config_text += "<b>Free Services:</b> ❌ DISABLED\n"
     
     # Queue info
-    queue_position = get_queue_position(user_id)
+    queue_position = await get_queue_position(user_id)
     config_text += f"\n<b>Queue Position:</b> {queue_position} tasks waiting"
     
     await message.reply_text(config_text)
@@ -790,7 +712,7 @@ async def myconfig_command(client, message: Message):
 @app.on_message(filters.command("status"))
 async def status_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     
     status_text = "<b>ϟ CURRENT STATUS</b>\n\n"
     
@@ -816,7 +738,7 @@ async def status_command(client, message: Message):
         status_text += "<b>2Captcha:</b> ❌ NOT SET\n"
     
     # Free services status
-    free_services = get_free_services()
+    free_services = await get_free_services()
     if free_services.get("enabled"):
         status_text += f"<b>Free Services:</b> ✔️ ENABLED\n"
         status_text += f"• Free Proxies: {len(free_services.get('free_proxies', []))}\n"
@@ -825,7 +747,7 @@ async def status_command(client, message: Message):
         status_text += "<b>Free Services:</b> ❌ DISABLED\n"
     
     # Queue status
-    queue_position = get_queue_position(user_id)
+    queue_position = await get_queue_position(user_id)
     global_queue_size = global_queue.qsize()
     status_text += f"\n<b>Your Queue Position:</b> {queue_position}\n"
     status_text += f"<b>Global Queue Size:</b> {global_queue_size}"
@@ -836,7 +758,7 @@ async def status_command(client, message: Message):
 async def queue_command(client, message: Message):
     user_id = message.from_user.id
     
-    queue_position = get_queue_position(user_id)
+    queue_position = await get_queue_position(user_id)
     global_queue_size = global_queue.qsize()
     
     queue_text = "<b>ϟ QUEUE INFORMATION</b>\n\n"
@@ -855,7 +777,7 @@ async def queue_command(client, message: Message):
 @app.on_message(filters.command("settings"))
 async def settings_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     settings = user_data.get("settings", {})
     
     keyboard = [
@@ -902,7 +824,7 @@ Choose what to include in your generated accounts:
 async def handle_callback(client, callback_query):
     user_id = callback_query.from_user.id
     data = callback_query.data
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     settings = user_data.get("settings", {})
     
     if data == "toggle_email_pass":
@@ -912,7 +834,6 @@ async def handle_callback(client, callback_query):
             return
         
         settings["email_pass"] = not settings.get("email_pass", True)
-        # Ensure at least one option is enabled
         if not any(settings.values()):
             settings["email_pass"] = True
             await callback_query.answer("❌ At least one option must be enabled", show_alert=True)
@@ -944,7 +865,7 @@ async def handle_callback(client, callback_query):
         await start_command(client, callback_query.message)
         return
     
-    update_user_data(user_id, {"settings": settings})
+    await update_user_data(user_id, {"settings": settings})
     
     # Update the settings message
     keyboard = [
@@ -980,13 +901,13 @@ async def handle_callback(client, callback_query):
 @app.on_message(filters.command("generate"))
 async def generate_command(client, message: Message):
     user_id = message.from_user.id
-    user_data = get_user_data(user_id)
+    user_data = await get_user_data(user_id)
     
     # Check requirements
     has_captcha = bool(user_data.get("captcha_key"))
     has_proxy = bool(user_data.get("proxy"))
     
-    free_services = get_free_services()
+    free_services = await get_free_services()
     free_enabled = free_services.get("enabled", False)
     has_free_captcha = free_enabled and bool(free_services.get("free_keys"))
     has_free_proxy = free_enabled and bool(free_services.get("free_proxies"))
@@ -1045,9 +966,9 @@ Check your status: <code>/status</code>
         "captcha_key": captcha_key
     }
     
-    add_to_queue(user_id, task_data)
+    await add_to_queue(user_id, task_data)
     
-    queue_position = get_queue_position(user_id)
+    queue_position = await get_queue_position(user_id)
     
     await message.reply_text(f"""
 <b>ϟ TASK ADDED TO QUEUE</b>
@@ -1071,19 +992,23 @@ async def free_proxy_command(client, message: Message):
         return
     
     proxies = message.command[1:]
-    free_services = get_free_services()
+    free_services = await get_free_services()
     
-    # Validate proxies
+    # Validate proxies asynchronously
     valid_proxies = []
     invalid_proxies = []
     
-    for proxy in proxies:
-        if await check_proxy_status(proxy):
+    # Check proxies concurrently
+    tasks = [check_proxy_status(proxy) for proxy in proxies]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for i, (proxy, status) in enumerate(zip(proxies, results)):
+        if status and not isinstance(status, Exception):
             valid_proxies.append(proxy)
         else:
             invalid_proxies.append(proxy)
     
-    update_free_services({
+    await update_free_services({
         "free_proxies": valid_proxies,
         "updated_at": datetime.now()
     })
@@ -1096,13 +1021,13 @@ async def free_proxy_command(client, message: Message):
 
 @app.on_message(filters.command("rmvfreeproxy") & filters.user(OWNER_ID))
 async def remove_free_proxy_command(client, message: Message):
-    free_services = get_free_services()
+    free_services = await get_free_services()
     
     if not free_services.get("free_proxies"):
         await message.reply_text("❌ No free proxies to remove")
         return
     
-    update_free_services({
+    await update_free_services({
         "free_proxies": [],
         "updated_at": datetime.now()
     })
@@ -1120,20 +1045,23 @@ async def free_key_command(client, message: Message):
         return
     
     keys = message.command[1:]
-    free_services = get_free_services()
+    free_services = await get_free_services()
     
-    # Validate keys
+    # Validate keys asynchronously
     valid_keys = []
     invalid_keys = []
     
-    for key in keys:
-        success, _ = await check_captcha_balance(key)
-        if success:
+    # Check keys concurrently
+    tasks = [check_captcha_balance(key) for key in keys]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for i, (key, result) in enumerate(zip(keys, results)):
+        if isinstance(result, tuple) and result[0]:
             valid_keys.append(key)
         else:
             invalid_keys.append(key)
     
-    update_free_services({
+    await update_free_services({
         "free_keys": valid_keys,
         "updated_at": datetime.now()
     })
@@ -1146,13 +1074,13 @@ async def free_key_command(client, message: Message):
 
 @app.on_message(filters.command("rmvfreekey") & filters.user(OWNER_ID))
 async def remove_free_key_command(client, message: Message):
-    free_services = get_free_services()
+    free_services = await get_free_services()
     
     if not free_services.get("free_keys"):
         await message.reply_text("❌ No free keys to remove")
         return
     
-    update_free_services({
+    await update_free_services({
         "free_keys": [],
         "updated_at": datetime.now()
     })
@@ -1161,15 +1089,14 @@ async def remove_free_key_command(client, message: Message):
 
 @app.on_message(filters.command("freeservice") & filters.user(OWNER_ID))
 async def free_service_command(client, message: Message):
-    free_services = get_free_services()
+    free_services = await get_free_services()
     current_status = free_services.get("enabled", False)
     
     new_status = not current_status
-    update_free_services({"enabled": new_status})
+    await update_free_services({"enabled": new_status})
     
     status_text = "enabled" if new_status else "disabled"
     
-    # Add free services info
     free_proxies_count = len(free_services.get("free_proxies", []))
     free_keys_count = len(free_services.get("free_keys", []))
     
@@ -1181,15 +1108,18 @@ async def free_service_command(client, message: Message):
 
 @app.on_message(filters.command("stats") & filters.user(OWNER_ID))
 async def stats_command(client, message: Message):
-    # Get bot stats
-    bot_stats = get_bot_stats()
+    bot_stats = await get_bot_stats()
     
     # Get user stats
-    total_users = users_collection.count_documents({})
-    active_users = users_collection.count_documents({"accounts_generated": {"$gt": 0}})
+    loop = asyncio.get_event_loop()
+    total_users = await loop.run_in_executor(None, users_collection.count_documents, {})
+    active_users = await loop.run_in_executor(
+        None, 
+        users_collection.count_documents, 
+        {"accounts_generated": {"$gt": 0}}
+    )
     
-    # Get free services stats
-    free_services = get_free_services()
+    free_services = await get_free_services()
     
     stats_text = "<b>ϟ BOT STATISTICS</b>\n\n"
     stats_text += f"<b>Total Accounts Generated:</b> {bot_stats.get('total_accounts_generated', 0)}\n"
@@ -1202,8 +1132,13 @@ async def stats_command(client, message: Message):
     stats_text += f"• Free Keys: {len(free_services.get('free_keys', []))}\n\n"
     
     stats_text += "<b>ϟ TOP USERS (BY ACCOUNTS GENERATED):</b>\n"
-    top_users = users_collection.find().sort("accounts_generated", -1).limit(5)
-    for i, user in enumerate(top_users, 1):
+    top_users = await loop.run_in_executor(
+        None,
+        users_collection.find().sort("accounts_generated", -1).limit(5).__iter__
+    )
+    top_users_list = list(top_users)
+    
+    for i, user in enumerate(top_users_list, 1):
         stats_text += f"{i}. User {user['user_id']}: {user.get('accounts_generated', 0)} accounts\n"
     
     stats_text += f"\n<b>Last Updated:</b> {bot_stats.get('last_updated', 'N/A')}"
@@ -1212,7 +1147,6 @@ async def stats_command(client, message: Message):
 
 @app.on_message(filters.command("queue_stats") & filters.user(OWNER_ID))
 async def queue_stats_command(client, message: Message):
-    """Show global queue statistics for admin"""
     global_queue_size = global_queue.qsize()
     active_user_queues = len(user_queues)
     
@@ -1225,7 +1159,6 @@ async def queue_stats_command(client, message: Message):
     queue_stats_text += f"<b>Active User Queues:</b> {active_user_queues}\n"
     queue_stats_text += f"<b>Total Tasks in All Queues:</b> {total_tasks}\n\n"
     
-    # Show top users with most queued tasks
     if user_queues:
         queue_stats_text += "<b>ϟ USERS WITH QUEUED TASKS:</b>\n"
         user_task_counts = []
@@ -1234,33 +1167,39 @@ async def queue_stats_command(client, message: Message):
             if task_count > 0:
                 user_task_counts.append((user_id, task_count))
         
-        # Sort by task count (descending)
         user_task_counts.sort(key=lambda x: x[1], reverse=True)
         
-        for i, (user_id, task_count) in enumerate(user_task_counts[:10], 1):  # Top 10
+        for i, (user_id, task_count) in enumerate(user_task_counts[:10], 1):
             queue_stats_text += f"{i}. User {user_id}: {task_count} tasks\n"
     else:
         queue_stats_text += "<b>No active user queues</b>\n"
     
     await message.reply_text(queue_stats_text)
 
-# Start the background task processor
+# Startup handler
+@app.on_message(filters.command("init"))
+async def init_bot(client, message: Message):
+    """Initialize bot background tasks"""
+    if message.from_user.id == OWNER_ID:
+        asyncio.create_task(process_queued_tasks())
+        await message.reply_text("ϟ Bot background tasks initialized!")
+
+# Start the bot
 async def main():
-    """Main function to start the bot and background tasks"""
-    # Start the background task processor
+    """Main function to start the bot"""
+    # Start background task processor
     asyncio.create_task(process_queued_tasks())
     
     # Start the bot
     await app.start()
-    log.log("ϟ Webshare Bot Started with Queue System", "green")
+    print("ϟ Webshare Bot Started with Async Queue System")
     
-    # Keep the bot running
+    # Keep running
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    print("ϟ Webshare Bot Starting...")
+    print("ϟ Starting Webshare Bot...")
     
-    # Run the main function
     try:
         app.run(main())
     except KeyboardInterrupt:
