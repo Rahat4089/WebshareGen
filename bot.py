@@ -508,9 +508,9 @@ async def process_generation_task(user_id: int, task_data: dict):
         captcha_key = task_data["captcha_key"]
         
         # Check proxy status
-        proxy_status = "» INACTIVE"
+        proxy_status = "❌ INACTIVE"
         if proxy_list:
-            proxy_status = "» ACTIVE" if await check_proxy_status(proxy_list[0]) else "» INACTIVE"
+            proxy_status = "✔️ ACTIVE" if await check_proxy_status(proxy_list[0]) else "❌ INACTIVE"
         
         # Check captcha balance
         captcha_balance = "N/A"
@@ -541,7 +541,7 @@ async def process_generation_task(user_id: int, task_data: dict):
                 "last_updated": datetime.now()
             })
             
-            response_text = "» ACCOUNT GENERATED SUCCESSFULLY\n\n"
+            response_text = "ϟ ACCOUNT GENERATED SUCCESSFULLY\n\n"
             
             if settings.get("email_pass"):
                 response_text += f"<b>Email:</b> <code>{account_data['Email']}</code>\n"
@@ -559,7 +559,7 @@ async def process_generation_task(user_id: int, task_data: dict):
             response_text += f"<b>Time Taken:</b> {account_data['time_taken']}s\n"
             response_text += f"<b>Proxy Status:</b> {proxy_status}\n"
             response_text += f"<b>2Captcha Balance:</b> {captcha_balance}\n\n"
-            response_text += f"» Saved to your accounts file: <code>accounts_{user_id}.json</code>"
+            response_text += f"ϟ Saved to your accounts file: <code>accounts_{user_id}.json</code>"
             
             # Send the message first
             await message.reply_text(response_text)
@@ -569,22 +569,22 @@ async def process_generation_task(user_id: int, task_data: dict):
                 try:
                     await message.reply_document(
                         document=filepath,
-                        caption=f"» Your accounts file - {os.path.basename(filepath)}"
+                        caption=f"ϟ Your accounts file - {os.path.basename(filepath)}"
                     )
                     # Clean up file after sending
                     await cleanup_file(filepath)
                 except Exception as e:
-                    await message.reply_text(f"» Error sending file: {e}")
+                    await message.reply_text(f"ϟ Error sending file: {e}")
             else:
-                await message.reply_text("» Could not generate accounts file")
+                await message.reply_text("ϟ Could not generate accounts file")
                 
         else:
-            await message.reply_text(f"» GENERATION FAILED\n\nError: {result}")
+            await message.reply_text(f"ϟ GENERATION FAILED\n\nError: {result}")
             
     except Exception as e:
         log.log(f"Error processing generation task: {e}", "red")
         try:
-            await message.reply_text(f"» GENERATION FAILED\n\nError: {str(e)}")
+            await message.reply_text(f"ϟ GENERATION FAILED\n\nError: {str(e)}")
         except:
             pass
 
@@ -594,10 +594,16 @@ async def start_command(client, message: Message):
     user_id = message.from_user.id
     get_user_data(user_id)  # Initialize user data
     
+    # Create keyboard with ϟ button
+    keyboard = [
+        [InlineKeyboardButton("ϟ", url="https://t.me/still_alivenow")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
     welcome_text = """
-<b>WEBSHARE ACCOUNT GENERATOR BOT</b>
+<b>ϟ WEBSHARE ACCOUNT GENERATOR BOT</b>
 
-<b>FEATURES:</b>
+<b>ϟ FEATURES:</b>
 • Create Webshare.io accounts with 1GB proxy traffic
 • Support for both static and rotating proxies
 • 2Captcha integration for automatic captcha solving
@@ -606,7 +612,7 @@ async def start_command(client, message: Message):
 • Automatic file download and cleanup
 • User-based and global queue system
 
-<b>AVAILABLE COMMANDS:</b>
+<b>ϟ AVAILABLE COMMANDS:</b>
 /addproxy - Add your proxy
 /rmvproxy - Remove your proxy  
 /addkey - Add 2Captcha API key
@@ -617,7 +623,7 @@ async def start_command(client, message: Message):
 /myconfig - View current configuration
 /queue - Check your queue position
 
-<b>ADMIN COMMANDS:</b>
+<b>ϟ ADMIN COMMANDS:</b>
 /freeproxy - Add free proxies
 /freekey - Add free captcha keys  
 /freeservice - Toggle free services
@@ -627,7 +633,7 @@ async def start_command(client, message: Message):
 /queue_stats - View global queue stats
 """
     
-    await message.reply_text(welcome_text)
+    await message.reply_text(welcome_text, reply_markup=reply_markup)
 
 @app.on_message(filters.command("addproxy"))
 async def add_proxy_command(client, message: Message):
@@ -636,15 +642,15 @@ async def add_proxy_command(client, message: Message):
     
     if len(message.command) < 2:
         await message.reply_text("""
-<b>USAGE:</b> <code>/addproxy [proxy]</code>
+<b>ϟ USAGE:</b> <code>/addproxy [proxy]</code>
 
-<b>PROXY FORMATS:</b>
+<b>ϟ PROXY FORMATS:</b>
 • <code>ip:port</code>
 • <code>user:pass@ip:port</code> 
 • <code>user:pass:ip:port</code>
 • <code>ip:port:user:pass</code>
 
-<b>EXAMPLE:</b> <code>/addproxy 123.456.789:8080:user:pass</code>
+<b>ϟ EXAMPLE:</b> <code>/addproxy 123.456.789:8080:user:pass</code>
 """)
         return
     
@@ -665,22 +671,22 @@ async def add_proxy_command(client, message: Message):
             elif len(parts) == 4:
                 ip, port, user, pwd = parts
             else:
-                await message.reply_text("» INVALID PROXY FORMAT")
+                await message.reply_text("ϟ INVALID PROXY FORMAT")
                 return
                 
         # Check proxy status
         status = await check_proxy_status(proxy)
         if not status:
-            await message.reply_text("» Proxy added but seems inactive. Check format and try /status")
+            await message.reply_text("ϟ Proxy added but seems inactive. Check format and try /status")
         else:
-            await message.reply_text("» Proxy is active and working")
+            await message.reply_text("ϟ Proxy is active and working")
             
     except Exception as e:
-        await message.reply_text("» INVALID PROXY FORMAT")
+        await message.reply_text("ϟ INVALID PROXY FORMAT")
         return
     
     update_user_data(user_id, {"proxy": proxy})
-    await message.reply_text("» PROXY ADDED SUCCESSFULLY")
+    await message.reply_text("ϟ PROXY ADDED SUCCESSFULLY")
 
 @app.on_message(filters.command("rmvproxy"))
 async def remove_proxy_command(client, message: Message):
@@ -688,11 +694,11 @@ async def remove_proxy_command(client, message: Message):
     user_data = get_user_data(user_id)
     
     if not user_data.get("proxy"):
-        await message.reply_text("» You don't have any proxy set")
+        await message.reply_text("ϟ You don't have any proxy set")
         return
     
     update_user_data(user_id, {"proxy": ""})
-    await message.reply_text("» PROXY REMOVED SUCCESSFULLY")
+    await message.reply_text("ϟ PROXY REMOVED SUCCESSFULLY")
 
 @app.on_message(filters.command("addkey"))
 async def add_key_command(client, message: Message):
@@ -701,23 +707,23 @@ async def add_key_command(client, message: Message):
     
     if len(message.command) < 2:
         await message.reply_text("""
-<b>USAGE:</b> <code>/addkey [2captcha_api_key]</code>
+<b>ϟ USAGE:</b> <code>/addkey [2captcha_api_key]</code>
 
-<b>EXAMPLE:</b> <code>/addkey abc123def456ghi789</code>
+<b>ϟ EXAMPLE:</b> <code>/addkey abc123def456ghi789</code>
 """)
         return
     
     api_key = message.command[1]
     
     # Check captcha balance
-    await message.reply_text("» Checking 2Captcha balance...")
+    await message.reply_text("ϟ Checking 2Captcha balance...")
     success, result = await check_captcha_balance(api_key)
     
     if success:
         update_user_data(user_id, {"captcha_key": api_key})
-        await message.reply_text(f"» 2CAPTCHA KEY ADDED\n» Balance: ${result:.2f}")
+        await message.reply_text(f"ϟ 2CAPTCHA KEY ADDED\nϟ Balance: ${result:.2f}")
     else:
-        await message.reply_text(f"» INVALID 2CAPTCHA KEY: {result}")
+        await message.reply_text(f"ϟ INVALID 2CAPTCHA KEY: {result}")
 
 @app.on_message(filters.command("rmvkey"))
 async def remove_key_command(client, message: Message):
@@ -725,55 +731,55 @@ async def remove_key_command(client, message: Message):
     user_data = get_user_data(user_id)
     
     if not user_data.get("captcha_key"):
-        await message.reply_text("» You don't have any 2Captcha key set")
+        await message.reply_text("ϟ You don't have any 2Captcha key set")
         return
     
     update_user_data(user_id, {"captcha_key": ""})
-    await message.reply_text("» 2CAPTCHA KEY REMOVED SUCCESSFULLY")
+    await message.reply_text("ϟ 2CAPTCHA KEY REMOVED SUCCESSFULLY")
 
 @app.on_message(filters.command("myconfig"))
 async def myconfig_command(client, message: Message):
     user_id = message.from_user.id
     user_data = get_user_data(user_id)
     
-    config_text = "<b>YOUR CURRENT CONFIGURATION</b>\n\n"
+    config_text = "<b>ϟ YOUR CURRENT CONFIGURATION</b>\n\n"
     
     # Proxy info
     proxy = user_data.get("proxy", "")
     if proxy:
         proxy_status = await check_proxy_status(proxy)
         config_text += f"<b>Proxy:</b> <code>{proxy}</code>\n"
-        config_text += f"<b>Proxy Status:</b> {'» ACTIVE' if proxy_status else '» INACTIVE'}\n\n"
+        config_text += f"<b>Proxy Status:</b> {'✔️ ACTIVE' if proxy_status else '❌ INACTIVE'}\n\n"
     else:
-        config_text += "<b>Proxy:</b> » NOT SET\n\n"
+        config_text += "<b>Proxy:</b> ❌ NOT SET\n\n"
     
     # Captcha key info
     captcha_key = user_data.get("captcha_key", "")
     if captcha_key:
         success, result = await check_captcha_balance(captcha_key)
         if success:
-            config_text += f"<b>2Captcha Key:</b> » ACTIVE\n"
+            config_text += f"<b>2Captcha Key:</b> ✔️ ACTIVE\n"
             config_text += f"<b>Balance:</b> ${result:.2f}\n\n"
         else:
-            config_text += f"<b>2Captcha Key:</b> » INVALID\n\n"
+            config_text += f"<b>2Captcha Key:</b> ❌ INVALID\n\n"
     else:
-        config_text += "<b>2Captcha Key:</b> » NOT SET\n\n"
+        config_text += "<b>2Captcha Key:</b> ❌ NOT SET\n\n"
     
     # Settings info
     settings = user_data.get("settings", {})
-    config_text += "<b>ENABLED SETTINGS:</b>\n"
-    config_text += f"• Email:Pass - {'»' if settings.get('email_pass') else '«'}\n"
-    config_text += f"• Static Proxies - {'»' if settings.get('proxy') else '«'}\n"
-    config_text += f"• Rotating Endpoint - {'»' if settings.get('rotating_endpoint') else '«'}\n\n"
+    config_text += "<b>ϟ ENABLED SETTINGS:</b>\n"
+    config_text += f"• Email:Pass - {'✔️' if settings.get('email_pass') else '❌'}\n"
+    config_text += f"• Static Proxies - {'✔️' if settings.get('proxy') else '❌'}\n"
+    config_text += f"• Rotating Endpoint - {'✔️' if settings.get('rotating_endpoint') else '❌'}\n\n"
     
     # Free services info
     free_services = get_free_services()
     if free_services.get("enabled"):
-        config_text += "<b>Free Services:</b> » AVAILABLE\n"
+        config_text += "<b>Free Services:</b> ✔️ AVAILABLE\n"
         config_text += f"• Free Proxies: {len(free_services.get('free_proxies', []))}\n"
         config_text += f"• Free Keys: {len(free_services.get('free_keys', []))}\n"
     else:
-        config_text += "<b>Free Services:</b> « DISABLED\n"
+        config_text += "<b>Free Services:</b> ❌ DISABLED\n"
     
     # Queue info
     queue_position = get_queue_position(user_id)
@@ -786,37 +792,37 @@ async def status_command(client, message: Message):
     user_id = message.from_user.id
     user_data = get_user_data(user_id)
     
-    status_text = "<b>CURRENT STATUS</b>\n\n"
+    status_text = "<b>ϟ CURRENT STATUS</b>\n\n"
     
     # Proxy status
     proxy = user_data.get("proxy", "")
     if proxy:
-        status_text += "» Checking proxy status...\n"
+        status_text += "ϟ Checking proxy status...\n"
         proxy_status = await check_proxy_status(proxy)
-        status_text += f"<b>Proxy:</b> {'» ACTIVE' if proxy_status else '« INACTIVE'}\n"
+        status_text += f"<b>Proxy:</b> {'✔️ ACTIVE' if proxy_status else '❌ INACTIVE'}\n"
     else:
-        status_text += "<b>Proxy:</b> « NOT SET\n"
+        status_text += "<b>Proxy:</b> ❌ NOT SET\n"
     
     # Captcha key status
     captcha_key = user_data.get("captcha_key", "")
     if captcha_key:
-        status_text += "» Checking 2Captcha balance...\n"
+        status_text += "ϟ Checking 2Captcha balance...\n"
         success, result = await check_captcha_balance(captcha_key)
         if success:
-            status_text += f"<b>2Captcha:</b> » ACTIVE (${result:.2f})\n"
+            status_text += f"<b>2Captcha:</b> ✔️ ACTIVE (${result:.2f})\n"
         else:
-            status_text += f"<b>2Captcha:</b> « INVALID\n"
+            status_text += f"<b>2Captcha:</b> ❌ INVALID\n"
     else:
-        status_text += "<b>2Captcha:</b> « NOT SET\n"
+        status_text += "<b>2Captcha:</b> ❌ NOT SET\n"
     
     # Free services status
     free_services = get_free_services()
     if free_services.get("enabled"):
-        status_text += f"<b>Free Services:</b> » ENABLED\n"
+        status_text += f"<b>Free Services:</b> ✔️ ENABLED\n"
         status_text += f"• Free Proxies: {len(free_services.get('free_proxies', []))}\n"
         status_text += f"• Free Keys: {len(free_services.get('free_keys', []))}\n"
     else:
-        status_text += "<b>Free Services:</b> « DISABLED\n"
+        status_text += "<b>Free Services:</b> ❌ DISABLED\n"
     
     # Queue status
     queue_position = get_queue_position(user_id)
@@ -833,16 +839,16 @@ async def queue_command(client, message: Message):
     queue_position = get_queue_position(user_id)
     global_queue_size = global_queue.qsize()
     
-    queue_text = "<b>QUEUE INFORMATION</b>\n\n"
+    queue_text = "<b>ϟ QUEUE INFORMATION</b>\n\n"
     queue_text += f"<b>Your Position:</b> {queue_position} tasks waiting\n"
     queue_text += f"<b>Global Queue Size:</b> {global_queue_size} tasks\n\n"
     
     if queue_position == 0:
-        queue_text += "» You're next in line. Your task will be processed soon."
+        queue_text += "ϟ You're next in line. Your task will be processed soon."
     elif queue_position == 1:
-        queue_text += "» You have 1 task ahead of you. Please wait..."
+        queue_text += "ϟ You have 1 task ahead of you. Please wait..."
     else:
-        queue_text += f"» You have {queue_position} tasks ahead of you. Please be patient."
+        queue_text += f"ϟ You have {queue_position} tasks ahead of you. Please be patient."
     
     await message.reply_text(queue_text)
 
@@ -855,23 +861,24 @@ async def settings_command(client, message: Message):
     keyboard = [
         [
             InlineKeyboardButton(
-                f"{'»' if settings.get('email_pass') else '«'} Email:Pass", 
+                f"{'✔️' if settings.get('email_pass') else '❌'} Email:Pass", 
                 callback_data="toggle_email_pass"
             )
         ],
         [
             InlineKeyboardButton(
-                f"{'»' if settings.get('proxy') else '«'} Static Proxies", 
+                f"{'✔️' if settings.get('proxy') else '❌'} Static Proxies", 
                 callback_data="toggle_proxy"
             )
         ],
         [
             InlineKeyboardButton(
-                f"{'»' if settings.get('rotating_endpoint') else '«'} Rotating Endpoint", 
+                f"{'✔️' if settings.get('rotating_endpoint') else '❌'} Rotating Endpoint", 
                 callback_data="toggle_rotating"
             )
         ],
         [
+            InlineKeyboardButton("ϟ", url="https://t.me/still_alivenow"),
             InlineKeyboardButton("« Back", callback_data="back_to_main")
         ]
     ]
@@ -879,7 +886,7 @@ async def settings_command(client, message: Message):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     settings_text = """
-<b>ACCOUNT SETTINGS</b>
+<b>ϟ ACCOUNT SETTINGS</b>
 
 Choose what to include in your generated accounts:
 • <b>Email:Pass</b> - Account credentials
@@ -901,36 +908,36 @@ async def handle_callback(client, callback_query):
     if data == "toggle_email_pass":
         enabled_count = sum(settings.values())
         if not settings.get("email_pass") and enabled_count >= 3:
-            await callback_query.answer("« Maximum 3 options can be enabled", show_alert=True)
+            await callback_query.answer("❌ Maximum 3 options can be enabled", show_alert=True)
             return
         
         settings["email_pass"] = not settings.get("email_pass", True)
         # Ensure at least one option is enabled
         if not any(settings.values()):
             settings["email_pass"] = True
-            await callback_query.answer("« At least one option must be enabled", show_alert=True)
+            await callback_query.answer("❌ At least one option must be enabled", show_alert=True)
     
     elif data == "toggle_proxy":
         enabled_count = sum(settings.values())
         if not settings.get("proxy") and enabled_count >= 3:
-            await callback_query.answer("« Maximum 3 options can be enabled", show_alert=True)
+            await callback_query.answer("❌ Maximum 3 options can be enabled", show_alert=True)
             return
         
         settings["proxy"] = not settings.get("proxy", False)
         if not any(settings.values()):
             settings["proxy"] = True
-            await callback_query.answer("« At least one option must be enabled", show_alert=True)
+            await callback_query.answer("❌ At least one option must be enabled", show_alert=True)
     
     elif data == "toggle_rotating":
         enabled_count = sum(settings.values())
         if not settings.get("rotating_endpoint") and enabled_count >= 3:
-            await callback_query.answer("« Maximum 3 options can be enabled", show_alert=True)
+            await callback_query.answer("❌ Maximum 3 options can be enabled", show_alert=True)
             return
         
         settings["rotating_endpoint"] = not settings.get("rotating_endpoint", False)
         if not any(settings.values()):
             settings["rotating_endpoint"] = True
-            await callback_query.answer("« At least one option must be enabled", show_alert=True)
+            await callback_query.answer("❌ At least one option must be enabled", show_alert=True)
     
     elif data == "back_to_main":
         await callback_query.message.delete()
@@ -943,23 +950,24 @@ async def handle_callback(client, callback_query):
     keyboard = [
         [
             InlineKeyboardButton(
-                f"{'»' if settings.get('email_pass') else '«'} Email:Pass", 
+                f"{'✔️' if settings.get('email_pass') else '❌'} Email:Pass", 
                 callback_data="toggle_email_pass"
             )
         ],
         [
             InlineKeyboardButton(
-                f"{'»' if settings.get('proxy') else '«'} Static Proxies", 
+                f"{'✔️' if settings.get('proxy') else '❌'} Static Proxies", 
                 callback_data="toggle_proxy"
             )
         ],
         [
             InlineKeyboardButton(
-                f"{'»' if settings.get('rotating_endpoint') else '«'} Rotating Endpoint", 
+                f"{'✔️' if settings.get('rotating_endpoint') else '❌'} Rotating Endpoint", 
                 callback_data="toggle_rotating"
             )
         ],
         [
+            InlineKeyboardButton("ϟ", url="https://t.me/still_alivenow"),
             InlineKeyboardButton("« Back", callback_data="back_to_main")
         ]
     ]
@@ -985,7 +993,7 @@ async def generate_command(client, message: Message):
     
     if not has_captcha and not has_free_captcha:
         await message.reply_text("""
-<b>MISSING 2CAPTCHA KEY</b>
+<b>ϟ MISSING 2CAPTCHA KEY</b>
 
 You need to:
 1. Add a 2Captcha key: <code>/addkey [your_key]</code>
@@ -997,7 +1005,7 @@ Check your status: <code>/status</code>
     
     if not has_proxy and not has_free_proxy:
         await message.reply_text("""
-<b>MISSING PROXY</b>
+<b>ϟ MISSING PROXY</b>
 
 You need to:
 1. Add a proxy: <code>/addproxy [your_proxy]</code>
@@ -1010,7 +1018,7 @@ Check your status: <code>/status</code>
     # Get settings
     settings = user_data.get("settings", {})
     if not any(settings.values()):
-        await message.reply_text("« Please enable at least one option in /settings")
+        await message.reply_text("❌ Please enable at least one option in /settings")
         return
     
     # Prepare configuration
@@ -1042,7 +1050,7 @@ Check your status: <code>/status</code>
     queue_position = get_queue_position(user_id)
     
     await message.reply_text(f"""
-<b>TASK ADDED TO QUEUE</b>
+<b>ϟ TASK ADDED TO QUEUE</b>
 
 Your account generation task has been queued
 <b>Position in queue:</b> {queue_position}
@@ -1056,9 +1064,9 @@ The bot will notify you when your task is processed.
 async def free_proxy_command(client, message: Message):
     if len(message.command) < 2:
         await message.reply_text("""
-<b>USAGE:</b> <code>/freeproxy [proxy1] [proxy2] ...</code>
+<b>ϟ USAGE:</b> <code>/freeproxy [proxy1] [proxy2] ...</code>
 
-<b>EXAMPLE:</b> <code>/freeproxy 1.1.1.1:8080 2.2.2.2:9090@user:pass</code>
+<b>ϟ EXAMPLE:</b> <code>/freeproxy 1.1.1.1:8080 2.2.2.2:9090@user:pass</code>
 """)
         return
     
@@ -1080,9 +1088,9 @@ async def free_proxy_command(client, message: Message):
         "updated_at": datetime.now()
     })
     
-    response = f"» Added {len(valid_proxies)} valid free proxies\n"
+    response = f"ϟ Added {len(valid_proxies)} valid free proxies\n"
     if invalid_proxies:
-        response += f"« {len(invalid_proxies)} proxies were invalid and not added"
+        response += f"❌ {len(invalid_proxies)} proxies were invalid and not added"
     
     await message.reply_text(response)
 
@@ -1091,7 +1099,7 @@ async def remove_free_proxy_command(client, message: Message):
     free_services = get_free_services()
     
     if not free_services.get("free_proxies"):
-        await message.reply_text("« No free proxies to remove")
+        await message.reply_text("❌ No free proxies to remove")
         return
     
     update_free_services({
@@ -1099,15 +1107,15 @@ async def remove_free_proxy_command(client, message: Message):
         "updated_at": datetime.now()
     })
     
-    await message.reply_text("» ALL FREE PROXIES REMOVED SUCCESSFULLY")
+    await message.reply_text("ϟ ALL FREE PROXIES REMOVED SUCCESSFULLY")
 
 @app.on_message(filters.command("freekey") & filters.user(OWNER_ID))
 async def free_key_command(client, message: Message):
     if len(message.command) < 2:
         await message.reply_text("""
-<b>USAGE:</b> <code>/freekey [key1] [key2] ...</code>
+<b>ϟ USAGE:</b> <code>/freekey [key1] [key2] ...</code>
 
-<b>EXAMPLE:</b> <code>/freekey abc123 def456 ghi789</code>
+<b>ϟ EXAMPLE:</b> <code>/freekey abc123 def456 ghi789</code>
 """)
         return
     
@@ -1130,9 +1138,9 @@ async def free_key_command(client, message: Message):
         "updated_at": datetime.now()
     })
     
-    response = f"» Added {len(valid_keys)} valid free captcha keys\n"
+    response = f"ϟ Added {len(valid_keys)} valid free captcha keys\n"
     if invalid_keys:
-        response += f"« {len(invalid_keys)} keys were invalid and not added"
+        response += f"❌ {len(invalid_keys)} keys were invalid and not added"
     
     await message.reply_text(response)
 
@@ -1141,7 +1149,7 @@ async def remove_free_key_command(client, message: Message):
     free_services = get_free_services()
     
     if not free_services.get("free_keys"):
-        await message.reply_text("« No free keys to remove")
+        await message.reply_text("❌ No free keys to remove")
         return
     
     update_free_services({
@@ -1149,7 +1157,7 @@ async def remove_free_key_command(client, message: Message):
         "updated_at": datetime.now()
     })
     
-    await message.reply_text("» ALL FREE KEYS REMOVED SUCCESSFULLY")
+    await message.reply_text("ϟ ALL FREE KEYS REMOVED SUCCESSFULLY")
 
 @app.on_message(filters.command("freeservice") & filters.user(OWNER_ID))
 async def free_service_command(client, message: Message):
@@ -1165,7 +1173,7 @@ async def free_service_command(client, message: Message):
     free_proxies_count = len(free_services.get("free_proxies", []))
     free_keys_count = len(free_services.get("free_keys", []))
     
-    response = f"» Free services {status_text}\n"
+    response = f"ϟ Free services {status_text}\n"
     response += f"• Free Proxies: {free_proxies_count}\n"
     response += f"• Free Keys: {free_keys_count}"
     
@@ -1183,17 +1191,17 @@ async def stats_command(client, message: Message):
     # Get free services stats
     free_services = get_free_services()
     
-    stats_text = "<b>BOT STATISTICS</b>\n\n"
+    stats_text = "<b>ϟ BOT STATISTICS</b>\n\n"
     stats_text += f"<b>Total Accounts Generated:</b> {bot_stats.get('total_accounts_generated', 0)}\n"
     stats_text += f"<b>Total Users:</b> {total_users}\n"
     stats_text += f"<b>Active Users:</b> {active_users}\n\n"
     
-    stats_text += "<b>FREE SERVICES STATUS:</b>\n"
-    stats_text += f"• Enabled: {'»' if free_services.get('enabled') else '«'}\n"
+    stats_text += "<b>ϟ FREE SERVICES STATUS:</b>\n"
+    stats_text += f"• Enabled: {'✔️' if free_services.get('enabled') else '❌'}\n"
     stats_text += f"• Free Proxies: {len(free_services.get('free_proxies', []))}\n"
     stats_text += f"• Free Keys: {len(free_services.get('free_keys', []))}\n\n"
     
-    stats_text += "<b>TOP USERS (BY ACCOUNTS GENERATED):</b>\n"
+    stats_text += "<b>ϟ TOP USERS (BY ACCOUNTS GENERATED):</b>\n"
     top_users = users_collection.find().sort("accounts_generated", -1).limit(5)
     for i, user in enumerate(top_users, 1):
         stats_text += f"{i}. User {user['user_id']}: {user.get('accounts_generated', 0)} accounts\n"
@@ -1212,14 +1220,14 @@ async def queue_stats_command(client, message: Message):
     for user_queue in user_queues.values():
         total_tasks += user_queue.qsize()
     
-    queue_stats_text = "<b>QUEUE STATISTICS</b>\n\n"
+    queue_stats_text = "<b>ϟ QUEUE STATISTICS</b>\n\n"
     queue_stats_text += f"<b>Global Queue Size:</b> {global_queue_size}\n"
     queue_stats_text += f"<b>Active User Queues:</b> {active_user_queues}\n"
     queue_stats_text += f"<b>Total Tasks in All Queues:</b> {total_tasks}\n\n"
     
     # Show top users with most queued tasks
     if user_queues:
-        queue_stats_text += "<b>USERS WITH QUEUED TASKS:</b>\n"
+        queue_stats_text += "<b>ϟ USERS WITH QUEUED TASKS:</b>\n"
         user_task_counts = []
         for user_id, user_queue in user_queues.items():
             task_count = user_queue.qsize()
@@ -1244,18 +1252,18 @@ async def main():
     
     # Start the bot
     await app.start()
-    log.log("» Webshare Bot Started with Queue System", "green")
+    log.log("ϟ Webshare Bot Started with Queue System", "green")
     
     # Keep the bot running
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    print("» Webshare Bot Starting...")
+    print("ϟ Webshare Bot Starting...")
     
     # Run the main function
     try:
         app.run(main())
     except KeyboardInterrupt:
-        print("» Bot stopped by user")
+        print("ϟ Bot stopped by user")
     except Exception as e:
-        print(f"» Bot error: {e}")
+        print(f"ϟ Bot error: {e}")
