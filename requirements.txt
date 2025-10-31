@@ -1,0 +1,10 @@
+pyrofork
+tgcrypto
+requests
+colorama
+pymongo
+urllib3
+aiohttp
+python-dotenv
+gunicorn
+flask
